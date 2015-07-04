@@ -21,129 +21,146 @@
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
-
-// Load Grove module
+ 
+// Load Grove and MQTT modules
 var groveSensor = require('jsupm_grove');
 var mqtt = require('mqtt');
 var fs = require('fs');
+//var LCD = require('jsupm_i2clcd');
 
 // Create the temperature sensor object using AIO pin 0
 var temp = new groveSensor.GroveTemp(0);
 console.log(temp.name());
 
 // Set up variables for connection to IoTF
-var configFile = "./device.cfg";
+var configFile = "/node_app_slot/device.cfg";
 var port = 1883;
-var broker = "quickstart.messaging.internetofthings.ibmcloud.com";
+var broker;
 var topic;
 var client;
 
+// Set up variables for LCD display
+//var text = " ";
+//var myLCD = new LCD.Jhd1313m1(6, 0x3E, 0x62);
+
+// Set up MQTT connection
 require('getmac').getMac(function(err, macAddress) {
     if (err) throw err;
-    
+
     macAddress = macAddress.toString().replace(/:/g, '').toLowerCase();
 
-    require('properties').parse(configFile, { path: true }, function (err, config){
-        var options = {};
-        
-        // Set the configuration used when no device.cfg is present
-        var organization = "quickstart";
-        var deviceType = "iotsample-galileo";
+    require('properties').parse(configFile, {
+        path: true
+    }, function(err, config) {
 
-        // If device.cfg was loaded successfully update the configuarion
-        if(config){
 
-            if(config['auth-method']){
-                if(config['auth-method'] !== "token"){
-                    throw "Authentication method not supported. Please make sure you use \"token\".";
-                }
-                if(config['auth-method'] && !config['auth-token']){
-                    throw "Authentication method set to \"token\" but no \"auth-token\" setting was provided in device.cfg";
-                }
-
-                options.username = "use-token-auth"; // Actual value of options.username can be set to any string
-                options.password = config['auth-token'];
+        if (config['auth-method']) {
+            if (config['auth-method'] !== "token") {
+                throw "Authentication method not supported. Please make sure you use \"token\".";
+            }
+            if (config['auth-method'] && !config['auth-token']) {
+                throw "Authentication method set to \"token\" but no \"auth-token\" setting was provided in device.cfg";
             }
 
-            if(!config.org){
-                throw "Configuration should include an org field that specifies your organization.";
-            }
-
-            if(!config.type){
-                throw "Configuration should include a type field that specifies your device type.";
-            }
-
-            if(!config.id){
-                throw "Configuration should include an id field that specifies your device id.";
-            }
-
-            console.log("Configuration loaded successfully, connecting your device to the registered service.");
-
-            organization = config.org;
-            deviceType = config.type;
-            macAddress = config.id;
-
-            broker = organization + ".messaging.internetofthings.ibmcloud.com";
+            password = config['auth-token'];
         }
-        else {
-            console.log("No configuration file found, connecting to the quickstart servcice.");
+
+        if (!config.org) {
+            throw "Configuration should include an org field that specifies your organization.";
         }
-        
-        options.clientId = "d:" + organization + ":" + deviceType + ":" + macAddress;
-        client = mqtt.createClient(port, broker, options);
-        topic = "iot-2/evt/status/fmt/json";
 
-        var interval = setInterval(sendMessage,1000);
-
-        if(config){
-            client.subscribe('/iot-2/cmd/+/fmt/json');
-
-            client.on('message', function(topic, message) {
-                console.log('Received command on topic: ' + topic);
-                
-                var msg;
-                try {
-                    msg = JSON.parse(message);
-                }
-                catch (e) {
-                    msg = {};
-                    console.log("Couldn't parse recieved command. Please ensure it is valid JSON.");
-                }
-
-                if(msg.hasOwnProperty('send-status')){
-                    if(msg['send-status']){
-                        if(!interval){
-                            interval = setInterval(sendMessage,1000);
-                        }
-                    }
-                    else {
-                        clearInterval(interval);
-                        interval = false;
-                    }
-                }
-            });
+        if (!config.type) {
+            throw "Configuration should include a type field that specifies your device type.";
         }
-          
-        
+
+        if (!config.id) {
+            throw "Configuration should include an id field that specifies your device id.";
+        }
+
+        console.log("Configuration loaded successfully, connecting your device to the registered service.");
+
+        organization = config.org;
+        deviceType = config.type;
+        macAddress = config.id;
+
+
+        broker = organization + ".messaging.internetofthings.ibmcloud.com";
+        clientId = "d:" + organization + ":" + deviceType + ":" + macAddress;
+
+        client = mqtt.connect("mqtt://" + broker + ":" + port, {
+            "clientId": clientId,
+            "keepalive": 10000,
+            "username": "use-token-auth",
+            "password": password
+        });
+
+        topic = 'iot-2/evt/status/fmt/json';
+
+        // Send a message every second
+        var interval = setInterval(sendMessage, 1000);
+
+        // Subscribe and Publish
+        client.subscribe('iot-2/cmd/+/fmt/json', {
+            qos: 1
+        }, function(err, granted) {
+            if (err) throw err;
+            console.log("subscribed");
+        });
+        //});
+
+        client.on('error', function(err) {
+            console.error('client error ' + err);
+            process.exit(1);
+        });
+
+        client.on('message', function(topic, message, packet) {
+            console.log('Message received on topic: ' + topic);
+            var msg = JSON.parse(message.toString());
+            console.log(msg);
+
+            //lcdDisplay(msg);
+
+        });
+
         console.log("Broker: " + broker);
         console.log("Device ID: " + macAddress);
         console.log("Topic: " + topic);
-        console.log("Connection options: ");
-        console.log(options);
     });
 });
 
 function sendMessage() {
     var message = {};
     message.d = {};
-    
+
     // Read the temperature and send the data to IoTF
     var celsius = temp.value();
-    var fahrenheit = celsius * 9.0/5.0 + 32.0;
-    //console.log(celsius + " degrees Celsius, or " + Math.round(fahrenheit) + " degrees Fahrenheit");
-    
-    message.d.celsius = celsius; 
+    var fahrenheit = celsius * 9.0 / 5.0 + 32.0;
+
+    message.d.celsius = celsius;
     message.d.fahrenheit = fahrenheit;
+
     console.log(message);
+
+    // Publish message to MQTT status topic
     client.publish(topic, JSON.stringify(message));
 }
+/*
+function lcdDisplay(data) {
+    var text = data.d.text;
+    var color = data.d.color;
+
+    myLCD.clear();
+
+    if (color === "green") {
+        myLCD.setColor(110, 215, 089);
+    }
+    if (color === "red") {
+        myLCD.setColor(210, 058, 053);
+    }
+
+    myLCD.setCursor(0, 1);
+    myLCD.write('Temperature:');
+    myLCD.setCursor(1, 1);
+    myLCD.write(text);
+}
+*/
